@@ -271,7 +271,7 @@
     border:5px solid rgba(255,255,255,.45);box-shadow:0 8px 0 rgba(0,0,0,.18);
     background:linear-gradient(180deg,#b9f2ff,#6fcf72);
   }
-  #buildGameCanvas{width:100%;height:650px;display:block;cursor:crosshair;touch-action:none}
+  #buildGameCanvas{width:100%;height:650px;display:block;cursor:crosshair;touch-action:none;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
   .game-hint{
     position:absolute;left:12px;right:12px;bottom:12px;background:rgba(255,255,255,.86);
     border:3px solid rgba(90,57,25,.28);border-radius:16px;padding:9px;text-align:center;font-weight:900;
@@ -281,6 +281,10 @@
     width:46px;height:46px;border-radius:13px;border:3px solid rgba(74,43,20,.5);
     background:rgba(255,247,223,.95);font-size:21px;font-weight:900;cursor:pointer;
     box-shadow:0 3px 0 rgba(0,0,0,.22);
+  }
+  .cam-controls button.active{
+    background:#e5534b;border-color:#8f231d;
+    box-shadow:0 3px 0 rgba(0,0,0,.3),0 0 0 3px rgba(229,83,75,.35);
   }
   .cam-controls button:active{transform:translateY(2px);box-shadow:none}
   .layer-row{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;margin:10px 0}
@@ -440,7 +444,7 @@
         <div class="wood-title">材料背包</div>
         <div class="materials-list" id="gameMaterials"></div>
         <div class="small" style="line-height:1.5;margin-top:8px">
-          点击空地放方块，<b>同一格会自动往上叠</b>（最高 8 层）；右键拆掉最上层。<br>
+          点击空地放方块，<b>同一格会自动往上叠</b>（最高 8 层）。拆除：电脑右键；平板/手机<b>长按格子</b>，或点地图右上角 🔨 切换拆除模式后轻点即拆。<br>
           🛡️ 守卫：共 12 种士兵，房屋每升 2 级左右解锁一种新兵。近战会自由移动追击僵尸（不会穿墙），远程和法师守家输出，治疗师给队友回血，火弓箭手还能点燃僵尸！
         </div>
       </aside>
@@ -448,6 +452,7 @@
       <main class="game-canvas-wrap">
         <canvas id="buildGameCanvas" width="900" height="650"></canvas>
         <div class="cam-controls">
+          <button id="demolishBtn" onclick="toggleDemolish()" title="拆除模式：开启后点击格子即可拆除方块 / 收回士兵">🔨</button>
           <button onclick="zoomCam(1)" title="放大">➕</button>
           <button onclick="zoomCam(-1)" title="缩小">➖</button>
           <button onclick="fitCam()" title="看全岛">🗺️</button>
@@ -455,7 +460,7 @@
         </div>
         <div class="game-hint" id="gameHint">
           <div id="battleHud" style="display:none"></div>
-          <div id="gameHintText">点击格子放置（同一格自动向上叠）；右键拆掉最上层 / 收回士兵；🖱️ 按住拖动移动地图，滚轮或 ➕➖ 缩放。</div>
+          <div id="gameHintText">点击格子放置（同一格自动向上叠）；拆除：右键或<b>长按</b>格子，也可点 🔨 切换拆除模式；按住拖动移动地图，滚轮 / 双指捏合或 ➕➖ 缩放。</div>
         </div>
       </main>
 
@@ -2593,6 +2598,31 @@ function eraseGameBlock(x,y){ // 拆掉该格最上层的方块
   SFX.erase();
   save(); renderGame();
 }
+function removeAtCell(x,y){ // 拆除该格：优先收回士兵，否则拆掉最上层方块（右键 / 长按 / 拆除模式共用）
+  if(battle){toast("战斗中不能拆除，先打退僵尸！");return;}
+  const s=(state.soldiers||[]).find(sd=>sd.x===x&&sd.y===y);
+  if(s){
+    state.soldiers=state.soldiers.filter(sd=>sd!==s);
+    state.soldierItems[s.type]=(state.soldierItems[s.type]||0)+1;
+    save(); renderGame(); toast(`${SOLDIER_TYPES[s.type].name}已收回背包`);
+    return;
+  }
+  eraseGameBlock(x,y);
+}
+let demolishMode=false;
+function toggleDemolish(){
+  demolishMode=!demolishMode;
+  const b=document.getElementById("demolishBtn");
+  if(b)b.classList.toggle("active",demolishMode);
+  updateGameHint();
+  toast(demolishMode?"🔨 拆除模式：点一下格子就拆除方块 / 收回士兵":"🧱 已回到建造模式");
+}
+function updateGameHint(){
+  const el=document.getElementById("gameHintText"); if(!el)return;
+  el.innerHTML=demolishMode
+    ?"🔨 <b>拆除模式</b>：点击格子拆掉最上层 / 收回士兵；再点右上角 🔨 回到建造。"
+    :"点击格子放置（同一格自动向上叠）；拆除：右键或<b>长按</b>格子，也可点 🔨 切换拆除模式；按住拖动移动地图，滚轮 / 双指捏合或 ➕➖ 缩放。";
+}
 function finishManualBuild(){
   if(battle){toast("守卫战进行中，先打退僵尸！");return;}
   if((state.houseLevel||0)>=BUILD_STAGES.length){
@@ -2639,7 +2669,8 @@ function clearManualBuild(){
   Object.values(state.houseBlocks||{}).forEach(t=>state.materials[t]=(state.materials[t]||0)+1);
   state.houseBlocks={}; save(); renderGame();
 }
-let camDrag=null, suppressClick=false, camPinch=null;
+let camDrag=null, suppressClick=false, camPinch=null, longPressTimer=null, lastTouchRemove=0;
+function clearLongPress(){ if(longPressTimer){clearTimeout(longPressTimer);longPressTimer=null;} }
 function attachGameCanvasEvents(){
   const canvas=document.getElementById("buildGameCanvas"); if(!canvas || canvas._attached)return; canvas._attached=true;
   canvas.addEventListener("mousedown",e=>{
@@ -2672,15 +2703,29 @@ function attachGameCanvasEvents(){
   },{passive:false});
   // 触屏：单指拖动平移，双指捏合缩放
   canvas.addEventListener("touchstart",e=>{
+    clearLongPress();
     if(e.touches.length===2){
       camPinch={d:Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY),zoom:cam.zoom};
       camDrag=null;
     }else if(e.touches.length===1){
-      camDrag={sx:e.touches[0].clientX,sy:e.touches[0].clientY,ox:cam.ox,oy:cam.oy,moved:false};
+      const sx=e.touches[0].clientX, sy=e.touches[0].clientY;
+      camDrag={sx,sy,ox:cam.ox,oy:cam.oy,moved:false};
+      // 📱 平板/手机：长按格子 = 拆除（相当于电脑右键）
+      longPressTimer=setTimeout(()=>{
+        longPressTimer=null;
+        if(!camDrag||camDrag.moved||camPinch)return;
+        const r=canvas.getBoundingClientRect(), c=canvasToCell(sx-r.left,sy-r.top,0);
+        if(!c)return;
+        lastTouchRemove=Date.now();
+        camDrag=null;
+        if(navigator.vibrate){try{navigator.vibrate(35);}catch(_){}}
+        removeAtCell(c.x,c.y);
+      },520);
     }
   },{passive:true});
   canvas.addEventListener("touchmove",e=>{
     if(camPinch&&e.touches.length===2){
+      clearLongPress();
       e.preventDefault();
       const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
       cam.zoom=Math.max(minZoom(),Math.min(1.8,camPinch.zoom*d/Math.max(1,camPinch.d)));
@@ -2690,6 +2735,7 @@ function attachGameCanvasEvents(){
       const dx=e.touches[0].clientX-camDrag.sx, dy=e.touches[0].clientY-camDrag.sy;
       if(Math.abs(dx)+Math.abs(dy)>8)camDrag.moved=true;
       if(camDrag.moved){
+        clearLongPress();
         e.preventDefault();
         cam.ox=camDrag.ox+dx; cam.oy=camDrag.oy+dy; clampCam();
         if(!battle)renderGameCanvas();
@@ -2697,32 +2743,29 @@ function attachGameCanvasEvents(){
     }
   },{passive:false});
   canvas.addEventListener("touchend",e=>{
+    clearLongPress();
     if(camDrag&&camDrag.moved)suppressClick=true;
     if(e.touches.length<2)camPinch=null;
     if(e.touches.length===0)camDrag=null;
   });
+  canvas.addEventListener("touchcancel",()=>{clearLongPress();camDrag=null;camPinch=null;});
   canvas.addEventListener("click",e=>{
     if(suppressClick){suppressClick=false;return;} // 刚拖完地图，不算点击放置
+    if(Date.now()-lastTouchRemove<700)return; // 刚长按拆除过，忽略抬手时产生的点击
     const r=canvas.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
     if(battle && pokeZombieAt(mx,my))return;
     const c=canvasToCell(mx,my,0);
     if(!c)return;
+    if(demolishMode){removeAtCell(c.x,c.y);return;} // 🔨 拆除模式：点一下就拆
     if(SOLDIER_TYPES[selectedBuildMat])placeSoldier(c.x,c.y);
     else placeGameBlock(c.x,c.y);
   });
   canvas.addEventListener("contextmenu",e=>{
     e.preventDefault();
-    if(battle){toast("战斗中不能拆除，先打退僵尸！");return;}
+    if(Date.now()-lastTouchRemove<800)return; // 安卓平板长按会同时触发 contextmenu，避免连拆两块
     const r=canvas.getBoundingClientRect(), c=canvasToCell(e.clientX-r.left,e.clientY-r.top,0);
     if(!c)return;
-    const s=(state.soldiers||[]).find(s=>s.x===c.x&&s.y===c.y);
-    if(s){
-      state.soldiers=state.soldiers.filter(x=>x!==s);
-      state.soldierItems[s.type]=(state.soldierItems[s.type]||0)+1;
-      save(); renderGame(); toast(`${SOLDIER_TYPES[s.type].name}已收回背包`);
-      return;
-    }
-    eraseGameBlock(c.x,c.y);
+    removeAtCell(c.x,c.y);
   });
   window.addEventListener("resize",()=>{if(document.getElementById("gameScreen").classList.contains("show")){resizeGameCanvas();renderGame();}});
 }
