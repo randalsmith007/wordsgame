@@ -4,6 +4,10 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
 <title>方块单词世界 Block Vocabulary World</title>
+  // 阻止 iPad 系统默认的右键/长按菜单弹出
+window.addEventListener('contextmenu', function(e) {
+    e.preventDefault();
+}, { passive: false });
 <style>
   :root{
     --bg1:#75d8ff; --bg2:#5ab6f5; --panel:#fff7df; --wood:#9b5a23; --wood2:#6b3514;
