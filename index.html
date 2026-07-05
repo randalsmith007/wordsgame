@@ -314,6 +314,8 @@
   .mode-btns{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
   .mode-btns .btn{animation:modeIn .42s backwards;transition:.15s transform,.15s filter}
   .mode-btns .btn:hover{transform:translateY(-4px);filter:saturate(1.15)}
+  .mode-btns .btn.locked{filter:grayscale(.85);opacity:.62;cursor:not-allowed}
+  .mode-btns .btn.locked:hover{transform:none;filter:grayscale(.85)}
   .mode-btns .btn small{display:block;font-size:12px;font-weight:900;opacity:.92;letter-spacing:1px}
   @keyframes modeIn{from{opacity:0;transform:translateY(26px) scale(.82)}to{opacity:1;transform:none}}
   @media (max-width:1000px){
@@ -893,9 +895,14 @@ function openUnit(id){
       <div class="q-sub">已收集 ${cnt}/${u.words.length} 个单词方块。选择练习方式开始闯关。</div>
     </div>
     <div class="mode-btns">
-      ${QUIZ_MODES.map((m,i)=>`<button class="btn ${m.btn}" style="animation-delay:${(i*0.07).toFixed(2)}s" onclick="startQuiz(${id},'${m.mode}')">${m.label}<small>难度 ${"★".repeat(m.stars)}</small></button>`).join("")}
-      ${PATTERNS.some(p=>p.u===id)?`<button class="btn" style="background:linear-gradient(180deg,#ff9ecd,#c2478f);box-shadow:0 5px 0 #8a2f63;animation-delay:${(QUIZ_MODES.length*0.07).toFixed(2)}s" onclick="startPatternQuiz(${id})">🗨️ 句型对话<small>难度 ★★★</small></button>`:""}
+      ${QUIZ_MODES.map((m,i)=>{
+        const locked=quizModeLocked(m.stars);
+        return `<button class="btn ${m.btn}${locked?" locked":""}" style="animation-delay:${(i*0.07).toFixed(2)}s" onclick="startQuiz(${id},'${m.mode}')">${locked?"🔒 ":""}${m.label}<small>${locked?"已毕业 · 试试更难的":`难度 ${"★".repeat(m.stars)}`}</small></button>`;
+      }).join("")}
+      ${PATTERNS.some(p=>p.u===id)?(()=>{const pl=quizModeLocked(3);return `<button class="btn${pl?" locked":""}" style="background:linear-gradient(180deg,#ff9ecd,#c2478f);box-shadow:0 5px 0 #8a2f63;animation-delay:${(QUIZ_MODES.length*0.07).toFixed(2)}s" onclick="startPatternQuiz(${id})">${pl?"🔒 ":""}🗨️ 句型对话<small>${pl?"已毕业 · 试试更难的":"难度 ★★★"}</small></button>`;})():""}
     </div>
+    ${minQuizStars()>1?`<p class="small" style="text-align:center;margin:8px 0 0">🏠 房屋 ${state.houseLevel||0} 级：${"★".repeat(minQuizStars())} 以下的简单模式已毕业。${(()=>{const n=nextLockLevel();return n?`升到 ${n[0]} 级后只能玩 ${"★".repeat(n[1])} 及以上。`:"现在只保留最难的模式，加油！";})()}</p>`
+      :`<p class="small" style="text-align:center;margin:8px 0 0">🏠 提示：房屋升到 4/8/12 级后，会依次关闭 ★1/★2/★3 的简单模式，逼自己越玩越强！</p>`}
     <p class="small" style="text-align:center;margin:8px 0 0">💎 难度越高掉落越稀有！士兵按难度解锁掉落：★🐕守卫犬　★★⚔️剑士　★★★🔨锤子骑士　★★★★🏹弓箭手　★★★★★🧙魔法师</p>
     <div class="word-list">${sortWordsForDisplay(u.words,u.id).map(w=>`<div class="miniword ${state.done[w[0]]?'done':''}">${w[2]} ${w[0]}<br><span class="small">${w[1]}</span><br><span class="small">${wordStatLine(u.id,w[0])}</span></div>`).join("")}</div>
   `);
@@ -910,7 +917,26 @@ const QUIZ_MODES=[
   {mode:"spell",label:"拼写挑战",stars:5,btn:"red"}
 ];
 const MODE_DIFF={choice:1,listen:2,enchoice:3,complete:4,spell:5};
+/* ==== 难度毕业机制：房屋等级越高，太简单的模式关闭，逼自己挑战高星 ====
+   配置表 [达到的房屋等级, 最低可玩星级]，想调整门槛改这里即可 */
+const MODE_LOCK_STEPS=[[12,4],[8,3],[4,2]];
+function minQuizStars(){
+  const lv=state.houseLevel||0;
+  for(const [need,stars] of MODE_LOCK_STEPS)if(lv>=need)return stars;
+  return 1;
+}
+function nextLockLevel(){ // 下一次提高难度门槛的房屋等级（用于提示），满门槛返回 null
+  const lv=state.houseLevel||0;
+  const coming=[...MODE_LOCK_STEPS].sort((a,b)=>a[0]-b[0]).find(([need])=>lv<need);
+  return coming?coming:null;
+}
+function quizModeLocked(stars){return stars<minQuizStars();}
 function startQuiz(id,mode){
+  const m=QUIZ_MODES.find(x=>x.mode===mode);
+  if(m&&quizModeLocked(m.stars)){
+    toast(`🔒 房屋已经 ${state.houseLevel||0} 级，「${m.label}」（★${m.stars}）已毕业，去挑战 ${"★".repeat(minQuizStars())} 以上的模式吧！`);
+    return;
+  }
   const u=UNITS.find(x=>x.id===id);
   quiz={unit:u,mode,round:0,score:0,total:8,current:null,locked:false};
   nextQuestion();
@@ -1008,12 +1034,15 @@ function buildCompleteMask(word){
   const hideCount=Math.min(candidates.length,Math.max(1,Math.round(letterIdx.length*0.4)));
   const hidden=shuffle(candidates).slice(0,hideCount).sort((a,b)=>a-b);
   if(!hidden.length)hidden.push(letterIdx[letterIdx.length-1]);
-  const need=hidden.map(i=>chars[i].toLowerCase());
+  const need=hidden.map(i=>chars[i]); // 保留原始大小写：单词 I 必须给大写 I
+  const upperStyle=need.every(c=>/[A-Z]/.test(c)); // 被挖字母全是大写时，诱饵也用大写，风格一致
   const AL="abcdefghijklmnopqrstuvwxyz";
   const decoys=[];
   while(decoys.length<3){
-    const c=AL[Math.floor(Math.random()*26)];
-    if(!need.includes(c)&&!decoys.includes(c))decoys.push(c);
+    let c=AL[Math.floor(Math.random()*26)];
+    if(upperStyle)c=c.toUpperCase();
+    // 诱饵不能与待填字母同名（不分大小写），避免同时出现 I 和 i 造成混淆
+    if(!need.some(n=>n.toLowerCase()===c.toLowerCase())&&!decoys.includes(c))decoys.push(c);
   }
   return {chars,hidden,pos:0,pool:shuffle([...need,...decoys])};
 }
@@ -1021,7 +1050,7 @@ function pickLetter(btn){
   if(!quiz||quiz.locked||quiz.mode!=="complete"||btn.disabled)return;
   const m=quiz.maskState;
   const needIdx=m.hidden[m.pos];
-  const need=m.chars[needIdx].toLowerCase();
+  const need=m.chars[needIdx]; // 原样比较，保留大小写
   if(btn.dataset.l===need){
     const tile=document.querySelector(`.ctile.blank[data-i="${needIdx}"]`);
     if(tile){tile.textContent=m.chars[needIdx];tile.classList.add("filled");}
@@ -1046,6 +1075,7 @@ function jsStr(s){return String(s).replace(/\\/g,"\\\\").replace(/'/g,"\\'")}
 let patQuiz=null;
 function patKey(p){return "pat|"+p.id;}
 function startPatternQuiz(unitId){
+  if(quizModeLocked(3)){toast(`🔒 房屋已经 ${state.houseLevel||0} 级，「句型对话」（★3）已毕业，去挑战 ${"★".repeat(minQuizStars())} 以上的模式吧！`);return;}
   closeModal();
   if(battle){toast("守卫战进行中！");return;}
   const pool=PATTERNS.filter(p=>!unitId||p.u===unitId);
@@ -1185,18 +1215,47 @@ function finishQuiz(){
       <div class="q-sub">获得星星：${"⭐".repeat(stars) || "继续加油"}　奖励：${stars>=2?"+2 💎":"复习经验 +"} </div>
     </div>
     <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
-      <button class="btn orange" onclick="startQuiz(${quiz.unit.id},'choice')">再玩一次</button>
+      <button class="btn orange" onclick="startQuiz(${quiz.unit.id},'${quiz.mode}')">再玩一次</button>
       <button class="btn secondary" onclick="openUnit(${quiz.unit.id})">返回地图</button>
       <button class="btn" onclick="openBuild()">去建造</button>
     </div>
   `);
 }
+/* ==== 发音：显式挑选英文语音。只设 lang 时，部分平板会用系统中文引擎朗读，
+   中文引擎常把单独的大写 "I" 当罗马数字读成"一"，导致单词书里点 I 读音不对 ==== */
+let enVoice=null;
+function refreshVoices(){
+  try{
+    const vs=speechSynthesis.getVoices()||[];
+    const en=vs.filter(v=>/^en([-_]|$)/i.test(v.lang||""));
+    const us=en.filter(v=>/en[-_]?us/i.test(v.lang||""));
+    const pool=us.length?us:en;
+    enVoice=pool.find(v=>v.localService)||pool[0]||null; // 优先本地英文语音，离线也能读
+  }catch(e){}
+}
+if("speechSynthesis" in window){
+  refreshVoices();
+  try{speechSynthesis.onvoiceschanged=refreshVoices;}catch(e){} // Chrome/安卓语音列表是异步加载的
+}
+const SPEAK_FIX={i:"eye"}; // 同音替换：单独朗读 I 时一律读 eye（发音与 I 完全相同），任何引擎都不会再当成罗马数字"一"
 function speak(text){
   try{
     if(!("speechSynthesis" in window)) {toast("当前浏览器不支持发音"); return;}
-    speechSynthesis.cancel();
-    const u=new SpeechSynthesisUtterance(text);
+    if(!enVoice)refreshVoices(); // 语音列表可能刚异步加载好，用前再取一次
+    let t=String(text);
+    const fix=SPEAK_FIX[t.trim().toLowerCase()];
+    if(fix)t=fix;
+    // 只在正在播放/排队时才打断：cancel 紧跟 speak 在部分浏览器会把很短的音频吞掉
+    if(speechSynthesis.speaking||speechSynthesis.pending)speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(t);
     u.lang="en-US"; u.rate=.78; u.pitch=1.05;
+    if(enVoice)u.voice=enVoice;
+    let retried=false;
+    u.onerror=ev=>{ // 个别设备指定 voice 会朗读失败：去掉指定语音再读一次
+      if(retried||ev.error==="interrupted"||ev.error==="canceled")return;
+      retried=true;
+      try{const v=new SpeechSynthesisUtterance(t);v.lang="en-US";v.rate=.78;v.pitch=1.05;speechSynthesis.speak(v);}catch(_){}
+    };
     speechSynthesis.speak(u);
   }catch(e){}
 }
