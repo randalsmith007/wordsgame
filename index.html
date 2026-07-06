@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>沐野的世界V7.6</title>
+<title>沐野的方块单词世界</title>
 <style>
   :root{
     --bg1:#75d8ff; --bg2:#5ab6f5; --panel:#fff7df; --wood:#9b5a23; --wood2:#6b3514;
@@ -377,9 +377,11 @@
       <div class="cur-row">
         <button class="toolbtn" onclick="document.getElementById('importFile').click()">📥 导入课本</button>
         <button class="toolbtn" onclick="openBook()">📘 单词书</button>
+        <button class="toolbtn" onclick="openBackup()">💾 存档</button>
         <button class="toolbtn" id="soundBtn" onclick="toggleSound()">🔊 音效</button>
       </div>
       <input type="file" id="importFile" accept=".xlsx" style="display:none" onchange="handleImportFile(this)">
+      <input type="file" id="importSaveFile" accept=".json,application/json,.txt" style="display:none" onchange="importSaveFromFile(this)">
     </div>
   </div>
 
@@ -684,6 +686,68 @@ state.defenseUsed ??= 0;
 // 守卫战次数 = 当前房屋等级 + 1；每升一级，已用次数清零重新计算
 function defenseMaxTimes(){return (state.houseLevel||0)+1;}
 function save(){localStorage.setItem("bvw_state",JSON.stringify(state));}
+/* ==== 存档备份 / 恢复：进度绑定在"打开游戏的链接"上，换链接/换浏览器需要用它搬家 ==== */
+function saveSummary(o){
+  try{
+    const words=Object.keys(o.done||{}).length, lv=o.houseLevel||0, coins=o.coins||0, gems=o.gems||0;
+    return `已学 ${words} 词 · 房屋 ${lv} 级 · 💰${coins} 💎${gems}`;
+  }catch(e){return "（无法读取摘要）";}
+}
+function openBackup(){
+  const code=JSON.stringify(state);
+  showModal("💾 存档备份 / 恢复",`
+    <p class="small" style="line-height:1.7">进度保存在<b>当前这个链接</b>的浏览器里，换链接、换名字、换浏览器都相当于新存档。<br>
+    搬家方法：在<b>有进度</b>的链接上导出 → 在<b>新链接</b>上导入。当前存档：${saveSummary(state)}</p>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:12px 0">
+      <button class="btn orange" onclick="exportSave()">📤 导出存档文件</button>
+      <button class="btn" onclick="document.getElementById('importSaveFile').click()">📥 导入存档文件</button>
+    </div>
+    <p class="small" style="margin:6px 0 4px">文件不好传的话，也可以复制 / 粘贴存档代码：</p>
+    <textarea id="saveCodeBox" style="width:100%;height:88px;border-radius:10px;border:3px solid #d7a961;padding:8px;font-size:12px;box-sizing:border-box" spellcheck="false">${code.replace(/</g,"&lt;")}</textarea>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:8px">
+      <button class="btn secondary" onclick="copySaveCode()">📋 复制代码</button>
+      <button class="btn secondary" onclick="importSaveFromBox()">⬇️ 用框里的代码导入</button>
+    </div>`);
+}
+function exportSave(){
+  try{
+    const d=new Date(), pad=n=>String(n).padStart(2,"0");
+    const blob=new Blob([JSON.stringify(state)],{type:"application/json"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download=`单词建造小镇存档-${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),3000);
+    toast("📤 存档文件已导出，去另一个链接导入即可");
+  }catch(e){toast("导出失败，请用复制代码的方式");}
+}
+function copySaveCode(){
+  const box=document.getElementById("saveCodeBox"); if(!box)return;
+  box.select(); box.setSelectionRange(0,9999999);
+  const done=()=>toast("📋 已复制，去另一个链接粘贴导入");
+  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(box.value).then(done,()=>{document.execCommand("copy");done();});
+  else{document.execCommand("copy");done();}
+}
+function applySaveCode(text){
+  let obj;
+  try{obj=JSON.parse(text);}catch(e){toast("这段代码不是有效的存档");return;}
+  if(!obj||typeof obj!=="object"||Array.isArray(obj)||(!obj.done&&!obj.materials&&obj.houseLevel==null)){toast("这段代码不像本游戏的存档");return;}
+  if(!confirm(`确定用这份存档覆盖当前进度吗？\n\n导入的存档：${saveSummary(obj)}\n当前的存档：${saveSummary(state)}\n\n覆盖后页面会自动刷新。`))return;
+  localStorage.setItem("bvw_state",JSON.stringify(obj));
+  location.reload();
+}
+function importSaveFromBox(){
+  const box=document.getElementById("saveCodeBox");
+  if(box)applySaveCode(box.value.trim());
+}
+function importSaveFromFile(input){
+  const f=input.files&&input.files[0]; input.value="";
+  if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>applySaveCode(String(r.result).trim());
+  r.onerror=()=>toast("读取文件失败");
+  r.readAsText(f);
+}
 /* ==== 游戏时长限制（只管🏠建造+🧟打僵尸的游戏区；英语学习不受限）====
    规则：游戏区一次最多 PLAY_SESSION_MIN 分钟；两次之间至少隔 PLAY_GAP_HOURS 小时；每天最多 PLAY_TIMES_PER_DAY 次。
    只有"游戏画面可见且没有任何弹窗"才计时：答题、单元菜单、单词书、结算页、回首页学习，全部自动暂停。
