@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>方块单词世界 Block Vocabulary World</title>
+<title>沐野的世界V7.6</title>
 <style>
   :root{
     --bg1:#75d8ff; --bg2:#5ab6f5; --panel:#fff7df; --wood:#9b5a23; --wood2:#6b3514;
@@ -654,6 +654,7 @@ state.houseBlocks ??= {};
 state.houseLevel ??= state.built ? 1 : 0;
 state.play ??= {day:"",count:0,usedMs:0,open:0,lastSeen:0,lastEnd:0}; // 游戏时长限制（只计建造/打僵尸的游戏区时间）
 if(state.play.usedMs==null)state.play={day:state.play.day||"",count:state.play.count||0,usedMs:0,open:0,lastSeen:0,lastEnd:state.play.lastEnd||0}; // 兼容旧版存档字段
+if(!state.playResetV1){state.play={day:"",count:0,usedMs:0,open:0,lastSeen:0,lastEnd:0};state.playResetV1=1;save();} // 一次性重置时长限制数据（今日次数/冷却/会话清零），只执行一次，其他数据不动
 state.wordAppearCounts ??= {};
 state.wordRight ??= {};  // 每个单词答对次数
 state.wordWrong ??= {};  // 每个单词答错次数
