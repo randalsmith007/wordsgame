@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>方块单词世界V7.5</title>
+<title>方块单词世界 Block Vocabulary World</title>
 <style>
   :root{
     --bg1:#75d8ff; --bg2:#5ab6f5; --panel:#fff7df; --wood:#9b5a23; --wood2:#6b3514;
@@ -653,6 +653,7 @@ state.materials ??= {wood:3, stone:3, glass:1, roof:2, door:1, flower:2};
 state.houseBlocks ??= {};
 state.houseLevel ??= state.built ? 1 : 0;
 state.play ??= {day:"",count:0,usedMs:0,open:0,lastSeen:0,lastEnd:0}; // 游戏时长限制（只计建造/打僵尸的游戏区时间）
+if(state.play.usedMs==null)state.play={day:state.play.day||"",count:state.play.count||0,usedMs:0,open:0,lastSeen:0,lastEnd:state.play.lastEnd||0}; // 兼容旧版存档字段
 state.wordAppearCounts ??= {};
 state.wordRight ??= {};  // 每个单词答对次数
 state.wordWrong ??= {};  // 每个单词答错次数
@@ -684,8 +685,8 @@ function defenseMaxTimes(){return (state.houseLevel||0)+1;}
 function save(){localStorage.setItem("bvw_state",JSON.stringify(state));}
 /* ==== 游戏时长限制（只管🏠建造+🧟打僵尸的游戏区；英语学习不受限）====
    规则：游戏区一次最多 PLAY_SESSION_MIN 分钟；两次之间至少隔 PLAY_GAP_HOURS 小时；每天最多 PLAY_TIMES_PER_DAY 次。
-   计时只在停留在游戏画面时走：去答题、句型练习、背单词、回首页学习都自动暂停，不算游戏时间。
-   离开游戏区超过 PLAY_AWAY_CLOSE_MIN 分钟，本次自动结束（3小时间隔从离开那一刻算起）。想调整改下面的数字即可。 */
+   只有"游戏画面可见且没有任何弹窗"才计时：答题、单元菜单、单词书、结算页、回首页学习，全部自动暂停。
+   连续 PLAY_AWAY_CLOSE_MIN 分钟没有真正在玩，本次自动结束（3小时间隔从最后游玩时刻算起）。想调整改下面的数字即可。 */
 const PLAY_LIMIT_ON=true;        // 改成 false 可整体关闭限制
 const PLAY_SESSION_MIN=20;       // 一次最多玩几分钟（只累计游戏区时间）
 const PLAY_GAP_HOURS=3;          // 两次之间至少间隔几小时
@@ -693,9 +694,12 @@ const PLAY_TIMES_PER_DAY=2;      // 每天最多玩几次
 const PLAY_AWAY_CLOSE_MIN=10;    // 离开游戏区超过几分钟，本次自动收场
 function playTodayStr(){const d=new Date();return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;}
 function onGameScreen(){const g=document.getElementById("gameScreen");return !!g&&g.classList.contains("show");}
-function quizBusy(){ // 正在答题=学习，不计游戏时间（需答题对象存在且弹窗开着，防止残留状态卡住计时）
-  const m=document.getElementById("modal"), open=!!m&&m.classList.contains("show");
-  return open&&(!!(typeof quiz!=="undefined"&&quiz)||!!(typeof patQuiz!=="undefined"&&patQuiz));
+function playPausedNow(){ // 这一秒是否暂停计时：不在游戏画面 / 页面被切走 / 任何弹窗开着（答题、菜单、单词书、结算页都算学习）
+  if(!onGameScreen())return true;
+  if(document.hidden)return true;
+  const m=document.getElementById("modal");
+  if(m&&m.classList.contains("show"))return true;
+  return false;
 }
 function playCloseSession(endTs){const p=state.play;p.open=0;p.usedMs=0;p.lastSeen=0;p.lastEnd=endTs||Date.now();save();}
 function evalPlayGate(){
@@ -767,23 +771,23 @@ function updatePlayChip(leftMs){
   chip.textContent="⏰ "+fmtClock(leftMs);
   chip.classList.toggle("hurry",leftMs<=60000);
 }
-function playTickFn(){ // 每秒一跳：只有真正待在游戏画面（且没在答题）才累计
+function playTickFn(){ // 每秒一跳：只有真正在玩（游戏画面可见且没有任何弹窗）才累计
   if(!PLAY_LIMIT_ON)return;
   const p=state.play;
   if(!p.open){updatePlayChip(null);return;}
   const now=Date.now();
-  if(onGameScreen()&&!document.hidden){
-    p.lastSeen=now;
-    if(!quizBusy())p.usedMs+=1000;
+  if(!playPausedNow()){
+    p.lastSeen=now; // lastSeen = 最后一次真正在玩的时刻
+    p.usedMs+=1000;
     if(++playSaveCounter>=5){playSaveCounter=0;save();}
     const left=PLAY_SESSION_MIN*60000-p.usedMs;
     if(left<=0){onPlayTimeUp();return;}
-    updatePlayChip(quizBusy()?null:left);
+    updatePlayChip(left);
     if(left<=60000&&!playWarned.m1){playWarned.m1=1;toast("⏰ 游戏时间还剩 1 分钟");}
     else if(left<=5*60000&&!playWarned.m5){playWarned.m5=1;toast("⏰ 游戏时间还剩 5 分钟");}
   }else{
-    updatePlayChip(null); // 在学习区：暂停计时，不显示倒计时
-    if(p.lastSeen&&now-p.lastSeen>PLAY_AWAY_CLOSE_MIN*60000)playCloseSession(p.lastSeen);
+    updatePlayChip(null); // 暂停中（学习/弹窗/离开）：不计时、不显示倒计时
+    if(p.lastSeen&&now-p.lastSeen>PLAY_AWAY_CLOSE_MIN*60000)playCloseSession(p.lastSeen); // 连续太久没玩，本次自动收场
   }
 }
 function onPlayTimeUp(){
@@ -797,10 +801,9 @@ function onPlayTimeUp(){
 function initPlayLimit(){
   if(playTick)clearInterval(playTick);
   playTick=setInterval(playTickFn,1000);
-  document.addEventListener("visibilitychange",()=>{ // 切回页面先结算，再决定是否续上
+  document.addEventListener("visibilitychange",()=>{ // 切回页面先结算，若已锁定且停在游戏区则弹遮罩
     if(document.hidden)return;
     const g=evalPlayGate();
-    if(state.play.open)state.play.lastSeen=Date.now();
     if((g.st==="wait"||g.st==="done")&&onGameScreen())showPlayGateFor(g);
   });
 }
