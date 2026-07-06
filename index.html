@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>方块单词世界 Block Vocabulary World</title>
+<title>方块单词世界V7.5</title>
 <style>
   :root{
     --bg1:#75d8ff; --bg2:#5ab6f5; --panel:#fff7df; --wood:#9b5a23; --wood2:#6b3514;
@@ -330,6 +330,21 @@
     transition:.2s transform;
   }
   .toast.show{transform:translateX(-50%) translateY(0)}
+  /* ==== 游戏时长限制 ==== */
+  #playGate{position:fixed;inset:0;background:rgba(15,35,64,.9);z-index:9990;display:none;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)}
+  .pg-box{background:#fff7df;border:4px solid #4a2b14;border-radius:22px;padding:26px 28px;max-width:430px;width:92%;text-align:center;box-shadow:0 10px 0 rgba(0,0,0,.28)}
+  .pg-emoji{font-size:58px;line-height:1}
+  .pg-title{font-size:24px;font-weight:900;margin:10px 0 6px;color:#4a2b14}
+  .pg-sub{font-size:15px;color:#6b4a2a;line-height:1.8}
+  .pg-note{margin-top:10px;font-size:13px;color:#8a6a48}
+  .pg-box .btn{margin-top:14px;font-size:20px;padding:12px 34px}
+  #playChip{position:fixed;left:10px;bottom:10px;z-index:9980;display:none;background:rgba(255,247,223,.96);border:3px solid rgba(74,43,20,.5);border-radius:12px;padding:6px 12px;font-weight:900;color:#4a2b14;font-size:15px;box-shadow:0 3px 0 rgba(0,0,0,.22)}
+  #playChip.hurry{background:#ffe1de;border-color:#8f231d;color:#b3261e;animation:chipPulse 1s infinite}
+  @keyframes chipPulse{50%{transform:scale(1.07)}}
+  #toast.z-top,#toast{z-index:99999}
+  /* ==== 单元学完暂时锁定 ==== */
+  .island.island-locked{filter:grayscale(.8);opacity:.62}
+  .island .rec-badge{position:absolute;top:-10px;left:-6px;background:#ffd94d;color:#7a4d00;border:3px solid #b8860b;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:900;box-shadow:0 3px 0 rgba(0,0,0,.2);animation:chipPulse 1.4s infinite;z-index:2}
   .confetti{position:fixed;top:-20px;font-size:24px;animation:fall 1.4s linear forwards;z-index:30}
   @keyframes fall{to{transform:translateY(110vh) rotate(540deg);opacity:.2}}
   @media (max-width:1000px){
@@ -503,6 +518,8 @@
   </div>
 </div>
 <div class="toast" id="toast"></div>
+<div id="playGate"><div class="pg-box" id="playGateBox"></div></div>
+<div id="playChip"></div>
 
 <script>
 /* ==== 词汇数据：按年级分类（三年级上册 / 三年级下册） ==== */
@@ -635,6 +652,7 @@ state.done ??= {}; state.todayReward ??= false; state.lastUnit ??= 1;
 state.materials ??= {wood:3, stone:3, glass:1, roof:2, door:1, flower:2};
 state.houseBlocks ??= {};
 state.houseLevel ??= state.built ? 1 : 0;
+state.play ??= {day:"",count:0,usedMs:0,open:0,lastSeen:0,lastEnd:0}; // 游戏时长限制（只计建造/打僵尸的游戏区时间）
 state.wordAppearCounts ??= {};
 state.wordRight ??= {};  // 每个单词答对次数
 state.wordWrong ??= {};  // 每个单词答错次数
@@ -664,6 +682,128 @@ state.defenseUsed ??= 0;
 // 守卫战次数 = 当前房屋等级 + 1；每升一级，已用次数清零重新计算
 function defenseMaxTimes(){return (state.houseLevel||0)+1;}
 function save(){localStorage.setItem("bvw_state",JSON.stringify(state));}
+/* ==== 游戏时长限制（只管🏠建造+🧟打僵尸的游戏区；英语学习不受限）====
+   规则：游戏区一次最多 PLAY_SESSION_MIN 分钟；两次之间至少隔 PLAY_GAP_HOURS 小时；每天最多 PLAY_TIMES_PER_DAY 次。
+   计时只在停留在游戏画面时走：去答题、句型练习、背单词、回首页学习都自动暂停，不算游戏时间。
+   离开游戏区超过 PLAY_AWAY_CLOSE_MIN 分钟，本次自动结束（3小时间隔从离开那一刻算起）。想调整改下面的数字即可。 */
+const PLAY_LIMIT_ON=true;        // 改成 false 可整体关闭限制
+const PLAY_SESSION_MIN=20;       // 一次最多玩几分钟（只累计游戏区时间）
+const PLAY_GAP_HOURS=3;          // 两次之间至少间隔几小时
+const PLAY_TIMES_PER_DAY=2;      // 每天最多玩几次
+const PLAY_AWAY_CLOSE_MIN=10;    // 离开游戏区超过几分钟，本次自动收场
+function playTodayStr(){const d=new Date();return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;}
+function onGameScreen(){const g=document.getElementById("gameScreen");return !!g&&g.classList.contains("show");}
+function quizBusy(){ // 正在答题=学习，不计游戏时间（需答题对象存在且弹窗开着，防止残留状态卡住计时）
+  const m=document.getElementById("modal"), open=!!m&&m.classList.contains("show");
+  return open&&(!!(typeof quiz!=="undefined"&&quiz)||!!(typeof patQuiz!=="undefined"&&patQuiz));
+}
+function playCloseSession(endTs){const p=state.play;p.open=0;p.usedMs=0;p.lastSeen=0;p.lastEnd=endTs||Date.now();save();}
+function evalPlayGate(){
+  if(!PLAY_LIMIT_ON)return{st:"off"};
+  const p=state.play, now=Date.now(), LIM=PLAY_SESSION_MIN*60000, GAP=PLAY_GAP_HOURS*3600000, AWAY=PLAY_AWAY_CLOSE_MIN*60000;
+  if(p.day!==playTodayStr()){p.day=playTodayStr();p.count=0;save();} // 跨天重置次数（间隔时间照算）
+  if(p.open){
+    if(now<(p.lastSeen||0)-5*60000)playCloseSession(now);            // 时钟被大幅回拨，按结束处理
+    else if(p.lastSeen&&now-p.lastSeen>AWAY)playCloseSession(p.lastSeen); // 离开游戏区太久，按离开时刻收场
+    else if(p.usedMs>=LIM)playCloseSession(p.lastSeen||now);
+    else return{st:onGameScreen()?"playing":"paused",leftMs:LIM-p.usedMs};
+  }
+  if(p.count>=PLAY_TIMES_PER_DAY){
+    const t=new Date(); t.setHours(24,0,0,0);
+    return{st:"done",at:Math.max(t.getTime(),p.lastEnd?p.lastEnd+GAP:0)};
+  }
+  if(p.lastEnd&&now-p.lastEnd<GAP)return{st:"wait",at:p.lastEnd+GAP};
+  return{st:"ready"};
+}
+let playTick=null, playWarned={}, playGateTick=null, playSaveCounter=0;
+function fmtWait(ms){ms=Math.max(0,ms);const s=Math.ceil(ms/1000),h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?`${h} 小时 ${m} 分`:(m?`${m} 分 ${s%60} 秒`:`${s} 秒`);}
+function fmtClock(ms){const s=Math.max(0,Math.round(ms/1000));return `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;}
+function hidePlayGate(){const g=document.getElementById("playGate");if(g)g.style.display="none";if(playGateTick){clearInterval(playGateTick);playGateTick=null;}}
+function playGoLearn(){ // 遮罩上的"去学英语"：关遮罩并回到学习首页
+  hidePlayGate();
+  const gs=document.getElementById("gameScreen"), hs=document.getElementById("homeScreen");
+  if(gs&&gs.classList.contains("show")){gs.classList.remove("show");if(hs)hs.style.display="";try{render();}catch(e){}}
+}
+function showPlayGateFor(g){
+  const gate=document.getElementById("playGate"), box=document.getElementById("playGateBox");
+  if(!gate||!box)return;
+  if(playGateTick){clearInterval(playGateTick);playGateTick=null;}
+  gate.style.display="flex";
+  if(g.st==="ready"){
+    box.innerHTML=`<div class="pg-emoji">🎮</div><div class="pg-title">要开始游戏时间吗？</div>
+      <div class="pg-sub">今天第 <b>${state.play.count+1} / ${PLAY_TIMES_PER_DAY}</b> 次 · 游戏区累计可玩 <b>${PLAY_SESSION_MIN} 分钟</b><br><span class="small">去答题、学单词不计时，随时可以学 📚</span></div>
+      <button class="btn orange" onclick="startPlaySession()">▶️ 开始游戏</button>
+      <button class="btn secondary" onclick="playGoLearn()">📚 再学一会儿</button>`;
+    return;
+  }
+  const isDone=g.st==="done";
+  const upd=()=>{
+    const gg=evalPlayGate();
+    if(gg.st==="ready"){showPlayGateFor(gg);return;}
+    const left=g.at-Date.now();
+    const atD=new Date(g.at), tomorrow=atD.getDate()!==new Date().getDate();
+    box.innerHTML=`<div class="pg-emoji">${isDone?"🌙":"🛌"}</div>
+      <div class="pg-title">${isDone?"今天的游戏次数用完啦":"游戏区休息中"}</div>
+      <div class="pg-sub">${isDone?`每天最多玩 ${PLAY_TIMES_PER_DAY} 次，每次 ${PLAY_SESSION_MIN} 分钟。`:`两次游戏之间要休息 ${PLAY_GAP_HOURS} 小时。`}<br>
+      还要等 <b>${fmtWait(left)}</b><br><span class="small">${tomorrow?"明天":""} ${String(atD.getHours()).padStart(2,"0")}:${String(atD.getMinutes()).padStart(2,"0")} 之后可以再进游戏区</span></div>
+      <div class="pg-note">英语学习不受限制，现在就可以去闯关攒材料 💪</div>
+      <button class="btn orange" onclick="playGoLearn()">📚 先去学英语</button>`;
+  };
+  upd(); playGateTick=setInterval(upd,1000);
+}
+function startPlaySession(){
+  const g=evalPlayGate();
+  if(g.st!=="ready"){showPlayGateFor(g);return;}
+  playWarned={};
+  const p=state.play; p.count++; p.usedMs=0; p.open=1; p.lastSeen=Date.now(); save();
+  hidePlayGate();
+  showGame();
+  toast(`⏰ 第 ${p.count}/${PLAY_TIMES_PER_DAY} 次游戏开始！游戏区可玩 ${PLAY_SESSION_MIN} 分钟，答题学习不计时`);
+}
+function updatePlayChip(leftMs){
+  const chip=document.getElementById("playChip"); if(!chip)return;
+  if(leftMs==null){chip.style.display="none";return;}
+  chip.style.display="block";
+  chip.textContent="⏰ "+fmtClock(leftMs);
+  chip.classList.toggle("hurry",leftMs<=60000);
+}
+function playTickFn(){ // 每秒一跳：只有真正待在游戏画面（且没在答题）才累计
+  if(!PLAY_LIMIT_ON)return;
+  const p=state.play;
+  if(!p.open){updatePlayChip(null);return;}
+  const now=Date.now();
+  if(onGameScreen()&&!document.hidden){
+    p.lastSeen=now;
+    if(!quizBusy())p.usedMs+=1000;
+    if(++playSaveCounter>=5){playSaveCounter=0;save();}
+    const left=PLAY_SESSION_MIN*60000-p.usedMs;
+    if(left<=0){onPlayTimeUp();return;}
+    updatePlayChip(quizBusy()?null:left);
+    if(left<=60000&&!playWarned.m1){playWarned.m1=1;toast("⏰ 游戏时间还剩 1 分钟");}
+    else if(left<=5*60000&&!playWarned.m5){playWarned.m5=1;toast("⏰ 游戏时间还剩 5 分钟");}
+  }else{
+    updatePlayChip(null); // 在学习区：暂停计时，不显示倒计时
+    if(p.lastSeen&&now-p.lastSeen>PLAY_AWAY_CLOSE_MIN*60000)playCloseSession(p.lastSeen);
+  }
+}
+function onPlayTimeUp(){
+  if(typeof battle!=="undefined"&&battle){try{endBattle(false,true,true);}catch(e){}}
+  try{closeModal();}catch(e){}
+  playCloseSession(Date.now());
+  updatePlayChip(null);
+  showPlayGateFor(evalPlayGate());
+  toast("⏰ 游戏时间到！可以继续学英语，或休息一下");
+}
+function initPlayLimit(){
+  if(playTick)clearInterval(playTick);
+  playTick=setInterval(playTickFn,1000);
+  document.addEventListener("visibilitychange",()=>{ // 切回页面先结算，再决定是否续上
+    if(document.hidden)return;
+    const g=evalPlayGate();
+    if(state.play.open)state.play.lastSeen=Date.now();
+    if((g.st==="wait"||g.st==="done")&&onGameScreen())showPlayGateFor(g);
+  });
+}
 
 /* ==== 音效系统（Web Audio 程序合成，无外部文件，全部本地） ==== */
 let audioCtx=null;
@@ -735,6 +875,9 @@ function level(){return Math.floor(state.xp/100)+1}
 function xpPct(){return state.xp%100}
 function doneCount(){return Object.keys(state.done).length}
 function unitDoneCount(unit){return unit.words.filter(w=>state.done[w[0]]).length}
+function unitLearned(u){return unitDoneCount(u)>=u.words.length;} // 该单元每个单词都答对过 = 学完
+function gradeOfUnit(id){return GRADE_DATA.find(g=>g.units.some(u=>u.id===id));}
+function nextUnlearnedUnit(gr){return gr?gr.units.find(u=>!unitLearned(u)):null;}
 function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),1600)}
 function confetti(){
   for(let i=0;i<18;i++){
@@ -807,13 +950,16 @@ function renderIslands(){
     grid.appendChild(head);
     const sec=document.createElement("div");
     sec.className="island-grid";
+    const allLearned=g.units.every(unitLearned);
+    const recUnit=g.units.find(u=>!unitLearned(u)); // 推荐入口：第一个还没学完的单元
     g.units.forEach((u,idx)=>{
       const d=document.createElement("div"); d.className="island";
       d.style.background=`linear-gradient(180deg,${u.color},#337b42)`;
       d.style.animationDelay=(idx*0.045)+"s";
       const sample=u.words.slice(0,8).map(w=>w[0]).join(", ") + (u.words.length>8?", ...":"");
-      const cnt=unitDoneCount(u);
-      d.innerHTML=`<div class="progress-pill">${cnt}/${u.words.length}</div><h3>${u.title}</h3><div class="scene">${u.scene}</div><div class="words">${sample}</div>`;
+      const cnt=unitDoneCount(u), learned=unitLearned(u);
+      if(learned&&!allLearned)d.classList.add("island-locked");
+      d.innerHTML=`<div class="progress-pill">${learned?"✅ ":""}${cnt}/${u.words.length}</div>${(recUnit===u)?'<div class="rec-badge">👉 从这里学</div>':""}<h3>${u.title}</h3><div class="scene">${u.scene}</div><div class="words">${sample}</div>`;
       d.onclick=()=>openUnit(u.id);
       sec.appendChild(d);
     });
@@ -886,6 +1032,14 @@ function closeModal(){document.getElementById("modal").classList.remove("show")}
 function showModal(title,html){document.getElementById("modalTitle").textContent=title;document.getElementById("modalContent").innerHTML=html;document.getElementById("modal").classList.add("show")}
 function openUnit(id){
   if(battle){toast("守卫战进行中！答对下方单词就能放⚡闪电");return;}
+  const u0=UNITS.find(x=>x.id===id), gr=gradeOfUnit(id);
+  if(u0&&gr&&unitLearned(u0)&&!gr.units.every(unitLearned)){ // 学完的单元暂时锁定，先把每个单元都学到
+    const nx=nextUnlearnedUnit(gr);
+    if(nx){
+      toast(`✅「${u0.title}」已经学会啦！先去「${nx.title}」，全部学完就能自由复习`);
+      id=nx.id;
+    }
+  }
   state.lastUnit=id; save();
   const u=UNITS.find(x=>x.id===id), cnt=unitDoneCount(u);
   showModal(`${u.short} U${u.num} · ${u.title}`,`
@@ -1220,6 +1374,7 @@ function finishQuiz(){
       <button class="btn" onclick="openBuild()">去建造</button>
     </div>
   `);
+  quiz=null; // 结算完成即退出答题状态（按钮参数已内联到HTML，置空不影响再玩一次）
 }
 /* ==== 发音：显式挑选英文语音。只设 lang 时，部分平板会用系统中文引擎朗读，
    中文引擎常把单独的大写 "I" 当罗马数字读成"一"，导致单词书里点 I 读音不对 ==== */
@@ -1440,9 +1595,13 @@ function openBuild(){
   showGame();
 }
 function showGame(){
+  const g=evalPlayGate();
+  if(g.st==="ready"||g.st==="wait"||g.st==="done"){showPlayGateFor(g);return false;}
+  if(g.st==="playing"||g.st==="paused"){state.play.lastSeen=Date.now();save();}
   document.getElementById("homeScreen").style.display="none";
   document.getElementById("gameScreen").classList.add("show");
   setTimeout(()=>{resizeGameCanvas(); renderGame();},50);
+  return true;
 }
 function showHomeFromGame(){
   if(battle){
@@ -3564,7 +3723,7 @@ async function handleImportFile(input){
 
 function openDefense(){
   closeModal();
-  showGame();
+  if(showGame()===false)return; // 游戏时长受限时，由遮罩接管
   setTimeout(()=>{
     showModal("僵尸守卫战",`
       <div class="question"><div class="q-emoji">🧟🌙🏠</div><div class="q-main">第 ${state.wave||1} 波僵尸要来啦！</div>
@@ -3577,6 +3736,7 @@ function openDefense(){
 }
 integrateCustomGrades(); // 恢复本地已导入的班级年级
 render();
+initPlayLimit(); // 游戏区时长限制：20分钟/次，间隔3小时，每天2次；英语学习不受限
 </script>
 </body>
 </html>
